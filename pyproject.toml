@@ -1,0 +1,52 @@
+[build-system]
+requires      = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name        = "cloudera-manager-mcp"
+version     = "1.0.0"
+description = "MCP server for Cloudera Manager REST API — log extraction, alerts, metrics, config, service operations and CM registry on Iceberg."
+readme      = "README.md"
+requires-python = ">=3.11"
+
+dependencies = [
+    # MCP framework
+    "mcp>=1.0.0",
+
+    # HTTP client for CM REST API
+    "httpx>=0.27.0",
+    "tenacity>=8.3.0",
+
+    # Data validation
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.3.0",
+
+    # Logging
+    "structlog>=24.2.0",
+
+    # Utilities
+    "python-dotenv>=1.0.0",
+    "python-dateutil>=2.9.0",
+
+    # Impala / HiveServer2 registry backend
+    "impyla>=0.21.0",
+    "thrift>=0.16.0",
+    "thrift-sasl>=0.4.3",
+    "pure-sasl>=0.6.2",
+]
+
+[project.scripts]
+# Entry point registered by uv / pip.
+# Agent Studio config: "command": "uvx", "args": ["--from", ".", "cloudera-manager-mcp"]
+cloudera-manager-mcp = "cloudera_manager_mcp.server:run"
+
+[tool.hatch.build.targets.wheel]
+# src layout: the package lives under cloudera_manager_mcp/
+packages = ["src/cloudera_manager_mcp"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/", "docs/", "pyproject.toml", "README.md", "env.example"]
+
+
+[tool.uv.sources]
+# No private indexes needed — all dependencies are on PyPI.
