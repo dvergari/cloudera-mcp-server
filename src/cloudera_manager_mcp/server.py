@@ -46,6 +46,8 @@ from config import ImpalaSettings, ServerSettings
 from cm_registry import CMRegistry
 from cm_pool import CMPool
 
+import sys
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOGGING
@@ -56,8 +58,9 @@ structlog.configure(
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
-        structlog.dev.ConsoleRenderer(),
-    ]
+        structlog.dev.ConsoleRenderer(colors=False),
+    ],
+    logger_factory = structlog.PrintLoggerFactory(file=sys.stderr),
 )
 log = structlog.get_logger(__name__)
 
@@ -557,7 +560,7 @@ async def registry_add(
     Register a new Cloudera Manager in the Iceberg table. The CM is
     immediately added to the connection pool.
     Set use_knox=true to route CM API calls through the CDP load balancer.
-    Knox URL: https://<lb_host>:<lb_port>/<cluster_name>/cdp-proxy-api/cm-api/api/<version>/
+    Knox URL: https://<lb_host>:<lb_port>/<cluster_name>/cdp-proxy-api/cm-api/<version>/
 
     Args:
         host:             CM hostname (used for direct connections).

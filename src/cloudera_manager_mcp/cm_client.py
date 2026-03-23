@@ -91,7 +91,7 @@ class ClouderaManagerClient:
           TLS      = controlled by use_tls / verify_ssl
 
         Via CDP load balancer (Knox):
-          base_url = https://<lb_host>:<lb_port>/<cluster_name>/cdp-proxy-api/cm-api/api/<version>
+          base_url = https://<lb_host>:<lb_port>/<cluster_name>/cdp-proxy-api/cm-api/<version>
           auth     = PLAIN over HTTPS (same username/password)
           TLS      = always enforced
         """

@@ -115,13 +115,13 @@ class ClouderaManagerSettings:
           https://<host>:<port>/api/<version>
 
         Knox / CDP Public Cloud:
-          https://<lb_host>:<lb_port>/<cluster_name>/cdp-proxy-api/cm-api/api/<version>
+          https://<lb_host>:<lb_port>/<cluster_name>/cdp-proxy-api/cm-api/<version>
         """
         if self.use_knox:
             return (
                 f"https://{self.lb_host}:{self.lb_port}"
                 f"/{self.cluster_name}/cdp-proxy-api/cm-api"
-                f"/api/{self.api_version}"
+                f"/{self.api_version}"
             )
         scheme = "https" if self.use_tls else "http"
         return f"{scheme}://{self.host}:{self.port}/api/{self.api_version}"

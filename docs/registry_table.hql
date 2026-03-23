@@ -22,7 +22,7 @@
 --   All CM API calls go through the CDP load balancer, which forwards them
 --   through Knox to the CM REST API. The path convention is:
 --
---     URL: https://<lb_host>:<lb_port>/<cluster_name>/cdp-proxy-api/cm-api/api/<api_version>/
+--     URL: https://<lb_host>:<lb_port>/<cluster_name>/cdp-proxy-api/cm-api/<api_version>/
 --
 --   Reference endpoint (as shown in CDP Public Cloud console):
 --     https://<load balancer url>:<load balancer port>/<cluster-name>/cdp-proxy-api/cm-api
@@ -88,10 +88,10 @@ CREATE TABLE IF NOT EXISTS cdp_registry.cloudera_managers (
     -- When use_knox = TRUE, the fields host / port / use_tls / verify_ssl are ignored.
     --
     -- Resulting URL:
-    --   https://<lb_host>:<lb_port>/<cluster_name>/cdp-proxy-api/cm-api/api/<api_version>/
+    --   https://<lb_host>:<lb_port>/<cluster_name>/cdp-proxy-api/cm-api/<api_version>/
     --
     -- Example:
-    --   https://lb.prod-eu.cdp.example.com:443/datahub-prod-eu/cdp-proxy-api/cm-api/api/v51/clusters
+    --   https://lb.prod-eu.cdp.example.com:443/datahub-prod-eu/cdp-proxy-api/cm-api/v51/clusters
     --
     use_knox         BOOLEAN    COMMENT 'Route CM API calls through CDP load balancer (Knox)',
     lb_host          STRING     COMMENT 'CDP load balancer hostname — required when use_knox = TRUE',
@@ -115,7 +115,7 @@ TBLPROPERTIES (
 INSERT INTO cdp_registry.cloudera_managers VALUES
 
 -- Row 1: CDP Public Cloud — via load balancer (use_knox = TRUE, recommended)
--- URL: https://lb.prod-eu.cdp.example.com:443/datahub-prod-eu/cdp-proxy-api/cm-api/api/v51/
+-- URL: https://lb.prod-eu.cdp.example.com:443/datahub-prod-eu/cdp-proxy-api/cm-api/v51/
 (
     'a1b2c3d4-0001-0001-0001-000000000001',
     'prod-eu-west',
@@ -139,7 +139,7 @@ INSERT INTO cdp_registry.cloudera_managers VALUES
 ),
 
 -- Row 2: CDP Public Cloud — US East, via load balancer
--- URL: https://lb.prod-us.cdp.example.com:443/datahub-prod-us/cdp-proxy-api/cm-api/api/v51/
+-- URL: https://lb.prod-us.cdp.example.com:443/datahub-prod-us/cdp-proxy-api/cm-api/v51/
 (
     'a1b2c3d4-0002-0002-0002-000000000002',
     'prod-us-east',
@@ -222,7 +222,7 @@ SELECT
     CASE
         WHEN use_knox THEN
             CONCAT('https://', lb_host, ':', CAST(lb_port AS STRING),
-                   '/', cluster_name, '/cdp-proxy-api/cm-api/api/', api_version)
+                   '/', cluster_name, '/cdp-proxy-api/cm-api/', api_version)
         ELSE
             CONCAT(CASE WHEN use_tls THEN 'https' ELSE 'http' END,
                    '://', host, ':', CAST(port AS STRING), '/api/', api_version)
