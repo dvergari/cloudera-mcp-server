@@ -91,7 +91,7 @@ class ClouderaManagerClient:
           TLS      = controlled by use_tls / verify_ssl
 
         Via CDP load balancer (Knox):
-          base_url = https://<lb_host>:<lb_port>/<cluster_name>/cdp-proxy-api/cm-api/<version>
+          base_url = https://<lb_host>:<lb_port>/<cluster_name>/cdp-proxy-api/cm-api/api/<version>
           auth     = PLAIN over HTTPS (same username/password)
           TLS      = always enforced
         """
@@ -156,14 +156,19 @@ class ClouderaManagerClient:
 
     async def _request(
         self,
-        method: str,
-        path:   str,
-        params: Optional[dict] = None,
-        json:   Optional[dict] = None,
+        method:  str,
+        path:    str,
+        params:  Optional[dict] = None,
+        json:    Optional[dict] = None,
+        headers: Optional[dict] = None,
     ) -> Any:
         """
         Execute an HTTP request against the CM API with retry logic.
         Maps HTTP error codes to typed exceptions.
+
+        headers: optional per-request headers that override the client defaults.
+                 Used for endpoints that return text/plain instead of JSON
+                 (e.g. /logs/full requires Accept: text/plain).
         """
         assert self._http, "Client not initialised. Call connect() or use async with."
 
@@ -171,7 +176,7 @@ class ClouderaManagerClient:
         async def _execute() -> Any:
             try:
                 response = await self._http.request(
-                    method, path, params=params, json=json
+                    method, path, params=params, json=json, headers=headers
                 )
             except httpx.TransportError as exc:
                 log.warning("cm_client.transport_error", path=path, error=str(exc))
@@ -207,11 +212,42 @@ class ClouderaManagerClient:
     async def _get(self, path: str, params: Optional[dict] = None) -> Any:
         return await self._request("GET", path, params=params)
 
-    async def _put(self, path: str, json: dict) -> Any:
-        return await self._request("PUT", path, json=json)
+    async def _get_text(self, path: str, params: Optional[dict] = None) -> str:
+        """
+        GET request that expects a plain-text response (e.g. /logs/full).
+        Sends Accept: text/plain and returns the raw response body as a string.
+        """
+        assert self._http, "Client not initialised. Call connect() or use async with."
 
-    async def _post(self, path: str, json: Optional[dict] = None) -> Any:
-        return await self._request("POST", path, json=json or {})
+        @self._retry_decorator()
+        async def _execute() -> str:
+            try:
+                response = await self._http.request(
+                    "GET", path, params=params,
+                    headers={"Accept": "text/plain"},
+                )
+            except httpx.TransportError as exc:
+                log.warning("cm_client.transport_error", path=path, error=str(exc))
+                raise
+
+            if response.status_code == 401:
+                raise CMAuthError(f"Authentication failed for {self.cfg.host}.")
+            if response.status_code == 403:
+                raise CMAuthError(f"Permission denied: {path}")
+            if response.status_code == 404:
+                raise CMNotFoundError(f"Resource not found: {path}")
+            if response.status_code in (503, 504):
+                raise CMServiceUnavailable(
+                    f"CM unavailable (HTTP {response.status_code}): {self.cfg.host}"
+                )
+            if response.status_code >= 400:
+                raise CMClientError(
+                    f"CM returned HTTP {response.status_code}: {response.text[:300]}"
+                )
+
+            return response.text
+
+        return await _execute()
 
     # ── Utility ──────────────────────────────────────────────────────────────
 
@@ -363,23 +399,46 @@ class ClouderaManagerClient:
                     if level_filter:
                         query_params["filter"] = f"level={level_filter}"
 
-                    data = await self._get(
+                    # /logs/full returns plain text — one log entry per line.
+                    # Each line is a tab-separated record:
+                    #   timestamp \t level \t thread \t class \t message
+                    # We parse it minimally: timestamp, level, message.
+                    raw_text = await self._get_text(
                         f"/clusters/{cluster_name}/services/{service_name}"
-                        f"/roles/{role_name}/logs",
+                        f"/roles/{role_name}/logs/full",
                         params=query_params,
                     )
+
+                    log.debug(
+                        "cm_client.logs.raw_text_length",
+                        role=role_name,
+                        chars=len(raw_text),
+                    )
+
                     entries = []
-                    for line in data.get("lines", []):
-                        message = line.get("message", "")
+                    for raw_line in raw_text.splitlines():
+                        raw_line = raw_line.strip()
+                        if not raw_line:
+                            continue
+
+                        # Tab-separated fields: timestamp, level, thread, class, message
+                        parts   = raw_line.split("\t", 4)
+                        ts      = parts[0] if len(parts) > 0 else ""
+                        level   = parts[1] if len(parts) > 1 else "INFO"
+                        message = parts[4] if len(parts) > 4 else raw_line
+
                         if keyword_filter and keyword_filter.lower() not in message.lower():
                             continue
+                        if level_filter and level.upper() != level_filter.upper():
+                            continue
+
                         entries.append({
-                            "timestamp": line.get("timestamp", ""),
-                            "level":     line.get("severity", "INFO"),
+                            "timestamp": ts,
+                            "level":     level,
                             "host":      hostname,
                             "role":      role_type,
                             "message":   message,
-                            "log_class": line.get("clazz"),
+                            "log_class": parts[3] if len(parts) > 3 else None,
                         })
                     return entries
 
