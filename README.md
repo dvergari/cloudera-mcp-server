@@ -78,8 +78,7 @@ cloudera-mcp-server/
         ├── cm_client.py                 async HTTP client for CM REST API
         ├── cm_pool.py                   multi-CM connection pool, cluster → host resolution
         ├── cm_registry.py               Iceberg registry (Impala / HiveServer2 via impyla)
-        ├── config.py                    Pydantic settings (ImpalaSettings, ServerSettings)
-        └── models.py                    Pydantic input / output models for every tool
+        └── config.py                    Pydantic settings (ImpalaSettings, ServerSettings)
 ```
 
 ---
@@ -218,7 +217,7 @@ Replace the URL with your internal GitLab or GitHub repository.
 {
   "command": "uvx",
   "args": [
-    "--from", "git+https://github.com/your-org/cloudera-mcp-server.git",
+    "--from", "git+https://github.com/dvergari/cloudera-mcp-server.git",
     "cloudera-manager-mcp"
   ],
   "env": { "IMPALA_HOST": "...", "..." : "..." }
