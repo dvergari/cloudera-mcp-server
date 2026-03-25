@@ -212,6 +212,12 @@ class ClouderaManagerClient:
     async def _get(self, path: str, params: Optional[dict] = None) -> Any:
         return await self._request("GET", path, params=params)
 
+    async def _put(self, path: str, json: dict) -> Any:
+        return await self._request("PUT", path, json=json)
+
+    async def _post(self, path: str, json: Optional[dict] = None) -> Any:
+        return await self._request("POST", path, json=json or {})
+
     async def _get_text(self, path: str, params: Optional[dict] = None) -> str:
         """
         GET request that expects a plain-text response (e.g. /logs/full).
@@ -479,27 +485,36 @@ class ClouderaManagerClient:
         service_filter: Optional[str],
         max_results:    int,
     ) -> dict:
-        """Fetch events and health alerts via the CM /events endpoint."""
-        query_params: dict = {"maxResults": max_results, "resultOffset": 0}
+        """
+        Fetch events and health alerts via the CM /events endpoint.
 
-        # Build CM query string
-        query_parts = []
-        if severity != "ALL":
-            query_parts.append(f"severity=>{severity}")
-        if cluster_name:
-            query_parts.append(f"cluster={cluster_name}")
-        if service_filter:
-            query_parts.append(f"service={service_filter}")
+        CM Events API query language notes:
+          - Time range: passed as separate 'from' and 'to' query parameters,
+            NOT embedded in the query string.
+          - Severity, cluster, service: filtered client-side from event
+            attributes — the CM query language does not support these
+            comparisons reliably across versions.
+
+        CM severity levels (ordered lowest to highest):
+          INFORMATION < IMPORTANT < CRITICAL
+        """
+        _SEVERITY_RANK = {"INFORMATION": 0, "IMPORTANT": 1, "CRITICAL": 2}
+
+        query_params: dict = {
+            "maxResults":   max_results,
+            "resultOffset": 0,
+        }
+
+        # Time range — separate params, not part of the query string
         if start_time:
-            query_parts.append(f"timeReceived_min={start_time}")
+            query_params["from"] = start_time
         if end_time:
-            query_parts.append(f"timeReceived_max={end_time}")
-
-        if query_parts:
-            query_params["query"] = " AND ".join(query_parts)
+            query_params["to"]   = end_time
 
         data  = await self._get("/events", params=query_params)
         items = data.get("items", [])
+
+        min_rank = _SEVERITY_RANK.get(severity, 0) if severity != "ALL" else -1
 
         alerts = []
         for item in items:
@@ -508,12 +523,25 @@ class ClouderaManagerClient:
                 a["name"]: a.get("values", [None])[0]
                 for a in item.get("attributes", [])
             }
+            item_cluster  = attr_map.get("CLUSTER",  attr_map.get("cluster",  ""))
+            item_service  = attr_map.get("SERVICE",  attr_map.get("service",  ""))
+            item_severity = item.get("severity", "")
+
+            # Client-side filtering
+            if cluster_name and cluster_name.lower() not in item_cluster.lower():
+                continue
+            if service_filter and service_filter.lower() not in item_service.lower():
+                continue
+            if min_rank >= 0:
+                if _SEVERITY_RANK.get(item_severity, 0) < min_rank:
+                    continue
+
             alerts.append({
                 "timestamp": item.get("timeOccurred", item.get("timeReceived", "")),
-                "severity":  item.get("severity", ""),
-                "service":   attr_map.get("SERVICE", attr_map.get("service")),
-                "host":      attr_map.get("HOSTID",  attr_map.get("host")),
-                "cluster":   attr_map.get("CLUSTER", cluster_name or ""),
+                "severity":  item_severity,
+                "service":   item_service,
+                "host":      attr_map.get("HOSTID", attr_map.get("host", "")),
+                "cluster":   item_cluster or cluster_name or "",
                 "content":   item.get("content", ""),
                 "category":  item.get("category"),
             })
