@@ -1,0 +1,34 @@
+{
+  "mcpServers": {
+    "Cloudera Manager MCP": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/dvergari/cloudera-mcp-server.git",
+        "cloudera-manager-mcp"
+        ],
+      "env": {
+        "MCP_LOG_LEVEL":"INFO",
+        "MCP_MAX_LOG_LINES":"5000",
+        "MCP_MAX_LOG_RANGE_HOURS":"48",
+        "MCP_MAX_RETRIES":"3",
+        "MCP_RETRY_WAIT_SECONDS":"2.0",
+        "MCP_MAX_CONCURRENT_REQUESTS":"10",
+        "MCP_REQUESTS_PER_MINUTE":"60",
+        "MCP_DEFAULT_METRIC_POINTS":"100",
+        "IMPALA_BACKEND":"hiveserver2",
+        "IMPALA_DATABASE":"cdp_registry",
+        "IMPALA_TABLE":"cloudera_managers",
+        "IMPALA_AUTH_MECHANISM":"LDAP",
+        "IMPALA_USERNAME":"<workload username>",
+        "IMPALA_PASSWORD":"<workload password>",
+        "IMPALA_USE_SSL":"true",
+        "IMPALA_USE_KNOX":"true",
+        "IMPALA_LB_HOST":"<Impala load balancer>",
+		"IMPALA_HOST":"<Impala load balancer>",
+        "IMPALA_LB_PORT":"443",
+        "IMPALA_CLUSTER_NAME":"<Impala/Hive datahub name>"
+      }
+    }
+  }
+}
