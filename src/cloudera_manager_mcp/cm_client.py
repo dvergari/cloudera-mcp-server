@@ -388,10 +388,13 @@ class ClouderaManagerClient:
         )
         all_roles = roles_data.get("items", [])
 
-        # Apply host and role-type filters
+        # Apply host and role-type filters.
+        # GATEWAY roles are excluded unconditionally — CM does not store
+        # meaningful service logs for them.
         target_roles = [
             r for r in all_roles
-            if (
+            if r.get("type", "").upper() != "GATEWAY"
+            and (
                 not host_filter
                 or host_filter.lower() in r.get("hostRef", {}).get("hostname", "").lower()
             )
