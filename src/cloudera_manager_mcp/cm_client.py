@@ -316,8 +316,41 @@ class ClouderaManagerClient:
         data = await self._get(f"/clusters/{cluster_name}/services")
         return data.get("items", [])
 
+    async def _resolve_service_name(
+        self, cluster_name: str, service_name: str
+    ) -> str:
+        """
+        Return the exact service name as registered in CM, performing a
+        case-insensitive match against the list of services in the cluster.
+
+        This prevents 404 errors caused by wrong casing (e.g. 'yarn' vs 'YARN'
+        vs 'Yarn') — CM service names are case-sensitive in URL paths.
+
+        Raises ValueError if no matching service is found, listing the
+        available services so the caller can report them to the user.
+        """
+        services = await self.list_services(cluster_name)
+        service_names = [s.get("name", "") for s in services]
+
+        for name in service_names:
+            if name.lower() == service_name.lower():
+                if name != service_name:
+                    log.debug(
+                        "cm_client.service_name_corrected",
+                        requested=service_name,
+                        resolved=name,
+                        cluster=cluster_name,
+                    )
+                return name
+
+        raise ValueError(
+            f"Service '{service_name}' not found on cluster '{cluster_name}'. "
+            f"Available services: {sorted(service_names)}"
+        )
+
     async def get_service(self, cluster_name: str, service_name: str) -> dict:
         """Return details for a single service."""
+        service_name = await self._resolve_service_name(cluster_name, service_name)
         return await self._get(f"/clusters/{cluster_name}/services/{service_name}")
 
     # ── Log extraction ───────────────────────────────────────────────────────
@@ -339,12 +372,14 @@ class ClouderaManagerClient:
         Extract logs from all roles of a service in parallel.
 
         Steps:
-          1. Validate and normalise the time range.
-          2. Enumerate all roles of the service.
-          3. Apply host / role-type filters.
-          4. Fetch logs per role concurrently (max 5 at a time).
-          5. Merge, sort by timestamp, and truncate to max_lines.
+          1. Resolve the exact service name (case-insensitive match).
+          2. Validate and normalise the time range.
+          3. Enumerate all roles of the service.
+          4. Apply host / role-type filters.
+          5. Fetch logs per role concurrently (max 5 at a time).
+          6. Merge, sort by timestamp, and truncate to max_lines.
         """
+        service_name = await self._resolve_service_name(cluster_name, service_name)
         start_iso, end_iso = self._validate_time_range(start_time, end_time, max_hours)
 
         # Enumerate roles
@@ -563,8 +598,9 @@ class ClouderaManagerClient:
         Retrieve time-series metrics via the CM tsquery language.
         One SELECT clause per requested metric.
         """
-        end_iso          = end_time or self._now_iso()
-        service_lower    = service_name.lower()
+        service_name  = await self._resolve_service_name(cluster_name, service_name)
+        end_iso       = end_time or self._now_iso()
+        service_lower = service_name.lower()
 
         # Build tsquery: one SELECT per metric, all targeting the same service
         selectors = ", ".join(
@@ -623,6 +659,7 @@ class ClouderaManagerClient:
         view='full'    → all parameters, including defaults
         view='summary' → only explicitly overridden parameters
         """
+        service_name = await self._resolve_service_name(cluster_name, service_name)
         query_params = {"view": view}
 
         if role_config_group:
@@ -670,6 +707,8 @@ class ClouderaManagerClient:
         Reads the current value first so old_value is always present in the result.
         Does NOT restart the service — call run_service_command afterwards if needed.
         """
+        service_name = await self._resolve_service_name(cluster_name, service_name)
+
         # Read current value for audit trail
         current = await self.get_config(
             cluster_name, service_name, role_config_group, "summary"
@@ -726,6 +765,7 @@ class ClouderaManagerClient:
         Returns immediately with a command_id.
         Poll status with get_command_status().
         """
+        service_name = await self._resolve_service_name(cluster_name, service_name)
         path = (
             f"/clusters/{cluster_name}/services/{service_name}"
             f"/commands/{command}"
