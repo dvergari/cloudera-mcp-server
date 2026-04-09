@@ -666,6 +666,7 @@ def run() -> None:
       - uvx cloudera-manager-mcp
       - the 'command'/'args' block in Agent Studio's MCP server configuration
     """
+
     mcp.run()
 
 

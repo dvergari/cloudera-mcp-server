@@ -497,19 +497,43 @@ class ClouderaManagerClient:
         for batch in results:
             all_entries.extend(batch)
 
-        # Sort by timestamp and truncate
-        all_entries.sort(key=lambda e: e.get("timestamp", ""))
-        truncated   = len(all_entries) > max_lines
-        final_entries = all_entries[:max_lines]
+        # Aggregate entries by (level, message, server).
+        # Key: (level, message, hostname) → accumulate occurrences and last_seen.
+        aggregated: dict[tuple, dict] = {}
+        for entry in all_entries:
+            key = (
+                entry.get("level",   ""),
+                entry.get("message", ""),
+                entry.get("host",    ""),
+            )
+            if key not in aggregated:
+                aggregated[key] = {
+                    "level":          entry.get("level",   ""),
+                    "message":        entry.get("message", ""),
+                    "server":         entry.get("host",    ""),
+                    "num_occurrence": 0,
+                    "last_seen":      "",
+                }
+            aggregated[key]["num_occurrence"] += 1
+            ts = entry.get("timestamp", "")
+            if ts > aggregated[key]["last_seen"]:
+                aggregated[key]["last_seen"] = ts
+
+        # Sort by num_occurrence descending
+        aggregated_list = sorted(
+            aggregated.values(),
+            key=lambda e: e["num_occurrence"],
+            reverse=True,
+        )
 
         return {
-            "cluster":     cluster_name,
-            "service":     service_name,
-            "total_lines": len(final_entries),
-            "truncated":   truncated,
-            "start_time":  start_iso,
-            "end_time":    end_iso,
-            "entries":     final_entries,
+            "cluster":         cluster_name,
+            "service":         service_name,
+            "start_time":      start_iso,
+            "end_time":        end_iso,
+            "total_unique":    len(aggregated_list),
+            "total_raw_lines": len(all_entries),
+            "entries":         aggregated_list,
         }
 
     # ── Alerts / Events ──────────────────────────────────────────────────────
