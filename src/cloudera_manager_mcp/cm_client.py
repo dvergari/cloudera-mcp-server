@@ -91,7 +91,7 @@ class ClouderaManagerClient:
           TLS      = controlled by use_tls / verify_ssl
 
         Via CDP load balancer (Knox):
-          base_url = https://<lb_host>:<lb_port>/<cluster_name>/cdp-proxy-api/cm-api/api/<version>
+          base_url = https://<lb_host>:<lb_port>/<cluster_name>/cdp-proxy-api/cm-api/<version>
           auth     = PLAIN over HTTPS (same username/password)
           TLS      = always enforced
         """
@@ -305,7 +305,6 @@ class ClouderaManagerClient:
           Calls GET /clusters and returns the full CM response.
         """
         if self.cfg.use_knox:
-            # Cluster name is known from the registry — no API call needed.
             return [{"name": self.cfg.cluster_name, "displayName": self.cfg.cluster_name}]
 
         data = await self._get("/clusters")
@@ -323,11 +322,7 @@ class ClouderaManagerClient:
         Return the exact service name as registered in CM, performing a
         case-insensitive match against the list of services in the cluster.
 
-        This prevents 404 errors caused by wrong casing (e.g. 'yarn' vs 'YARN'
-        vs 'Yarn') — CM service names are case-sensitive in URL paths.
-
-        Raises ValueError if no matching service is found, listing the
-        available services so the caller can report them to the user.
+        Raises ValueError if no matching service is found.
         """
         services = await self.list_services(cluster_name)
         service_names = [s.get("name", "") for s in services]
@@ -374,21 +369,38 @@ class ClouderaManagerClient:
         Steps:
           1. Resolve the exact service name (case-insensitive match).
           2. Validate and normalise the time range.
-          3. Enumerate all roles of the service.
-          4. Apply host / role-type filters.
-          5. Fetch logs per role concurrently (max 5 at a time).
-          6. Merge, sort by timestamp, and truncate to max_lines.
+          3. Enumerate all roles; exclude GATEWAY, apply host/role filters.
+          4. Fetch /logs/full per role concurrently (max 5 at a time).
+             NOTE: /logs/full does not support startTime, endTime or lines
+             as query parameters — the full log file is always returned and
+             all filtering is applied client-side.
+          5. Filter by time range, log level hierarchy, and keyword.
+          6. Aggregate by (level, message, server), sort by num_occurrence desc.
+
+        Log level hierarchy (ascending severity):
+          TRACE(0) < DEBUG(1) < INFO(2) < WARN(3) < ERROR(4) < FATAL(5)
+        Specifying a level returns that level AND all higher-severity ones.
+        Example: level_filter=WARN  →  includes WARN, ERROR, FATAL
+                 level_filter=INFO  →  includes INFO, WARN, ERROR, FATAL
         """
+        _LEVEL_RANK = {
+            "TRACE": 0, "DEBUG": 1, "INFO": 2,
+            "WARN":  3, "ERROR": 4, "FATAL": 5,
+        }
+
         service_name = await self._resolve_service_name(cluster_name, service_name)
         start_iso, end_iso = self._validate_time_range(start_time, end_time, max_hours)
 
+        start_dt = datetime.fromisoformat(start_iso)
+        end_dt   = datetime.fromisoformat(end_iso)
+        min_rank = _LEVEL_RANK.get((level_filter or "").upper(), 0) if level_filter else -1
+
         # Enumerate roles
-        roles_data  = await self._get(
+        roles_data = await self._get(
             f"/clusters/{cluster_name}/services/{service_name}/roles"
         )
         all_roles = roles_data.get("items", [])
 
-        # Apply host and role-type filters.
         # GATEWAY roles are excluded unconditionally — CM does not store
         # meaningful service logs for them.
         target_roles = [
@@ -406,14 +418,14 @@ class ClouderaManagerClient:
 
         if not target_roles:
             return {
-                "cluster":     cluster_name,
-                "service":     service_name,
-                "total_lines": 0,
-                "truncated":   False,
-                "start_time":  start_iso,
-                "end_time":    end_iso,
-                "entries":     [],
-                "warning":     "No roles matched the provided filters.",
+                "cluster":         cluster_name,
+                "service":         service_name,
+                "start_time":      start_iso,
+                "end_time":        end_iso,
+                "total_unique":    0,
+                "total_raw_lines": 0,
+                "entries":         [],
+                "warning":         "No roles matched the provided filters.",
             }
 
         log.info(
@@ -425,8 +437,7 @@ class ClouderaManagerClient:
             end=end_iso,
         )
 
-        # Fetch logs from each role concurrently, capped at 5 parallel requests
-        semaphore   = asyncio.Semaphore(5)
+        semaphore    = asyncio.Semaphore(5)
         all_entries: list[dict] = []
 
         async def _fetch_role_logs(role: dict) -> list[dict]:
@@ -435,22 +446,11 @@ class ClouderaManagerClient:
                 role_type = role.get("type", "UNKNOWN")
                 hostname  = role.get("hostRef", {}).get("hostname", "unknown")
                 try:
-                    query_params: dict = {
-                        "startTime": start_iso,
-                        "endTime":   end_iso,
-                        "lines":     min(max_lines, 1000),
-                    }
-                    if level_filter:
-                        query_params["filter"] = f"level={level_filter}"
-
-                    # /logs/full returns plain text — one log entry per line.
-                    # Each line is a tab-separated record:
-                    #   timestamp \t level \t thread \t class \t message
-                    # We parse it minimally: timestamp, level, message.
+                    # /logs/full returns the entire log as plain text.
+                    # No query parameters are supported by this endpoint.
                     raw_text = await self._get_text(
                         f"/clusters/{cluster_name}/services/{service_name}"
                         f"/roles/{role_name}/logs/full",
-                        params=query_params,
                     )
 
                     log.debug(
@@ -465,19 +465,34 @@ class ClouderaManagerClient:
                         if not raw_line:
                             continue
 
-                        # Tab-separated fields: timestamp, level, thread, class, message
+                        # Tab-separated: timestamp \t level \t thread \t class \t message
                         parts   = raw_line.split("\t", 4)
-                        ts      = parts[0] if len(parts) > 0 else ""
-                        level   = parts[1] if len(parts) > 1 else "INFO"
+                        ts_str  = parts[0] if len(parts) > 0 else ""
+                        level   = parts[1].strip() if len(parts) > 1 else "INFO"
                         message = parts[4] if len(parts) > 4 else raw_line
 
+                        # Filter by time range (client-side)
+                        try:
+                            ts_dt = datetime.fromisoformat(
+                                ts_str.replace("Z", "+00:00")
+                            )
+                            if ts_dt < start_dt or ts_dt > end_dt:
+                                continue
+                        except ValueError:
+                            pass  # unparseable timestamp — include the line
+
+                        # Filter by log level hierarchy (client-side)
+                        # min_rank == -1 means no filter (ALL levels)
+                        if min_rank >= 0:
+                            if _LEVEL_RANK.get(level.upper(), 0) < min_rank:
+                                continue
+
+                        # Filter by keyword (client-side)
                         if keyword_filter and keyword_filter.lower() not in message.lower():
-                            continue
-                        if level_filter and level.upper() != level_filter.upper():
                             continue
 
                         entries.append({
-                            "timestamp": ts,
+                            "timestamp": ts_str,
                             "level":     level,
                             "host":      hostname,
                             "role":      role_type,
@@ -497,8 +512,7 @@ class ClouderaManagerClient:
         for batch in results:
             all_entries.extend(batch)
 
-        # Aggregate entries by (level, message, server).
-        # Key: (level, message, hostname) → accumulate occurrences and last_seen.
+        # Aggregate by (level, message, server)
         aggregated: dict[tuple, dict] = {}
         for entry in all_entries:
             key = (
@@ -519,7 +533,6 @@ class ClouderaManagerClient:
             if ts > aggregated[key]["last_seen"]:
                 aggregated[key]["last_seen"] = ts
 
-        # Sort by num_occurrence descending
         aggregated_list = sorted(
             aggregated.values(),
             key=lambda e: e["num_occurrence"],
@@ -567,7 +580,6 @@ class ClouderaManagerClient:
             "resultOffset": 0,
         }
 
-        # Time range — separate params, not part of the query string
         if start_time:
             query_params["from"] = start_time
         if end_time:
@@ -580,7 +592,6 @@ class ClouderaManagerClient:
 
         alerts = []
         for item in items:
-            # Flatten the CM attribute bag into a plain dict
             attr_map = {
                 a["name"]: a.get("values", [None])[0]
                 for a in item.get("attributes", [])
@@ -589,7 +600,6 @@ class ClouderaManagerClient:
             item_service  = attr_map.get("SERVICE",  attr_map.get("service",  ""))
             item_severity = item.get("severity", "")
 
-            # Client-side filtering
             if cluster_name and cluster_name.lower() not in item_cluster.lower():
                 continue
             if service_filter and service_filter.lower() not in item_service.lower():
@@ -629,7 +639,6 @@ class ClouderaManagerClient:
         end_iso       = end_time or self._now_iso()
         service_lower = service_name.lower()
 
-        # Build tsquery: one SELECT per metric, all targeting the same service
         selectors = ", ".join(
             f"select {metric} "
             f"where serviceName='{service_lower}' "
@@ -736,7 +745,6 @@ class ClouderaManagerClient:
         """
         service_name = await self._resolve_service_name(cluster_name, service_name)
 
-        # Read current value for audit trail
         current = await self.get_config(
             cluster_name, service_name, role_config_group, "summary"
         )
@@ -945,13 +953,11 @@ class ClouderaManagerClient:
         Enumerate DataHubs managed by this CM instance.
 
         Knox (CDP Public Cloud):
-          GET /clusters is not available. Returns a synthetic entry built
-          from the registry configuration plus the service list from
-          GET /clusters/<cluster_name>/services.
+          Returns a synthetic entry built from the registry configuration
+          plus the service list from GET /clusters/<cluster_name>/services.
 
         Direct:
-          Uses the /clusters endpoint with view=full, then enriches each
-          entry with the service list.
+          Uses GET /clusters with view=full, enriched with service list.
         """
         if self.cfg.use_knox:
             cluster_name = self.cfg.cluster_name
@@ -974,7 +980,6 @@ class ClouderaManagerClient:
             }
             return {"total": 1, "datahubs": [datahub]}
 
-        # Direct connection — enumerate via GET /clusters
         data     = await self._get("/clusters", params={"view": "full"})
         clusters = data.get("items", [])
 

@@ -31,7 +31,7 @@ build/
 .pytest_cache/
 .coverage
 htmlcov/
-.env
+main.py
 
 # Type checking
 .mypy_cache/
@@ -40,3 +40,5 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+
