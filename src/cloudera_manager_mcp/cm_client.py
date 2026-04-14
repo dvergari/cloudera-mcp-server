@@ -479,7 +479,7 @@ class ClouderaManagerClient:
                             ts_dt = datetime.fromisoformat(
                                 ts_str.replace("Z", "+00:00")
                             )
-                            if ts_dt < start_dt or ts_dt > end_dt:
+                            if ts_dt < start_dt.replace(tzinfo=timezone.utc) or ts_dt > end_dt.replace(tzinfo=timezone.utc):
                                 continue
                         except ValueError:
                             pass  # unparseable timestamp — include the line
