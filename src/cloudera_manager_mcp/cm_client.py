@@ -461,15 +461,18 @@ class ClouderaManagerClient:
 
                     entries = []
                     for raw_line in raw_text.splitlines():
+                        if len(entries) >= max_lines:
+                            break
                         raw_line = raw_line.strip()
                         if not raw_line:
                             continue
 
                         # Tab-separated: timestamp \t level \t thread \t class \t message
-                        parts   = raw_line.split("\t", 4)
-                        ts_str  = parts[0] if len(parts) > 0 else ""
-                        level   = parts[1].strip() if len(parts) > 1 else "INFO"
+                        parts   = raw_line.split(maxsplit=4)
+                        ts_str  = f"{parts[0]} {parts[1]}" if len(parts) > 1 else ""
+                        level   = parts[2].strip() if len(parts) > 2 else "INFO"
                         message = parts[4] if len(parts) > 4 else raw_line
+
 
                         # Filter by time range (client-side)
                         try:
