@@ -480,11 +480,12 @@ class ClouderaManagerClient:
                                 ts_str.replace("Z", "+00:00")
                             )
 
-                            log.debug("cm_client.logs.ts_dt", ts_dt=ts_dt)
-                            log.debug("cm_client.logs.start_dt", start_dt=start_dt)
+
+
 
                             if ts_dt.tzinfo is None:
                                 ts_dt = ts_dt.replace(tzinfo=timezone.utc)
+
 
                             if ts_dt < start_dt or ts_dt > end_dt:
                                 continue
