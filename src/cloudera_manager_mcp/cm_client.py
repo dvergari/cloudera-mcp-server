@@ -392,7 +392,7 @@ class ClouderaManagerClient:
         start_iso, end_iso = self._validate_time_range(start_time, end_time, max_hours)
 
         start_dt = datetime.fromisoformat(start_iso)
-        end_dt   = datetime.fromisoformat(end_iso)
+        end_dt = datetime.fromisoformat(end_iso)
         min_rank = _LEVEL_RANK.get((level_filter or "").upper(), 0) if level_filter else -1
 
         # Enumerate roles
@@ -420,8 +420,8 @@ class ClouderaManagerClient:
             return {
                 "cluster":         cluster_name,
                 "service":         service_name,
-                "start_time":      start_iso,
-                "end_time":        end_iso,
+                "start_time":      start_dt,
+                "end_time":        end_dt,
                 "total_unique":    0,
                 "total_raw_lines": 0,
                 "entries":         [],
@@ -479,7 +479,14 @@ class ClouderaManagerClient:
                             ts_dt = datetime.fromisoformat(
                                 ts_str.replace("Z", "+00:00")
                             )
-                            if ts_dt < start_dt.replace(tzinfo=timezone.utc) or ts_dt > end_dt.replace(tzinfo=timezone.utc):
+
+                            log.debug("cm_client.logs.ts_dt", ts_dt=ts_dt)
+                            log.debug("cm_client.logs.start_dt", start_dt=start_dt)
+
+                            if ts_dt.tzinfo is None:
+                                ts_dt = ts_dt.replace(tzinfo=timezone.utc)
+
+                            if ts_dt < start_dt or ts_dt > end_dt:
                                 continue
                         except ValueError:
                             pass  # unparseable timestamp — include the line
