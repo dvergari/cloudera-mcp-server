@@ -226,7 +226,7 @@ Replace the URL with your internal GitLab or GitHub repository.
 
 ### Mode C — local wheel (air-gapped / production)
 
-Build the wheel once, copy it to the Agent Studio host, then point `uvx` at it.
+Build the wheel once, copy it to the Agent Studio host in path `/home/cdsw/agent-studio/.local/share/mcp`, then point `uvx` at the sandboxed path.
 No network access required at runtime.
 
 ```bash
@@ -241,7 +241,7 @@ uv build
 {
   "command": "uvx",
   "args": [
-    "--from", "/opt/mcp-wheels/cloudera_manager_mcp-1.0.0-py3-none-any.whl",
+    "--from", "/home/cdsw/.local/share/uv/mcp/cloudera_manager_mcp-1.0.0-py3-none-any.whl",
     "cloudera-manager-mcp"
   ],
   "env": { "IMPALA_HOST": "...", "..." : "..." }
